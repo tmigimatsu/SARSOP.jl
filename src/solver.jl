@@ -82,6 +82,21 @@ mutable struct POMDPPolicy <: SARSOPPolicy
         return self
     end
 end
+mutable struct MOMDPPolicy <: SARSOPPolicy
+    filename::AbstractString
+    alphas::Alphas
+    pomdp::POMDP
+    action_map::Vector{Any}
+    MOMDPPolicy(filename::AbstractString, alphas::Alphas, pomdp::MOMDP) = new(filename, alphas, pomdp, Any[])
+    function MOMDPPolicy(pomdp::MOMDP, filename::AbstractString="out.policy")
+        self = new()
+        self.filename = filename
+        self.pomdp = pomdp
+        self.alphas = MOMDPAlphas()
+        self.action_map = ordered_actions(pomdp)
+        return self
+    end
+end
 
 
 """
@@ -109,8 +124,28 @@ function solve(solver::SARSOPSolver, pomdp::POMDP, policy::POMDPPolicy=create_po
     policy.alphas = POMDPAlphas(policy.filename)
     return policy
 end
+function solve(solver::SARSOPSolver, pomdp::MOMDP, policy::MOMDPPolicy=create_policy(solver, pomdp); silent=false, pomdp_file_name::String="model.pomdpx")
+	pomdp_file = MOMDPFile(pomdp, pomdp_file_name, silent=silent)
+    if isempty(solver.options)
+        if silent == true
+            success(`$EXEC_POMDP_SOL $(pomdp_file_name) --output $(policy.filename)`)
+        else
+            run(`$EXEC_POMDP_SOL $(pomdp_file_name) --output $(policy.filename)`)
+        end
+    else
+        options_list = _get_options_list(solver.options)
+        if silent == true
+            success(`$EXEC_POMDP_SOL $(pomdp_file_name) --output $(policy.filename) $options_list`)
+        else
+            run(`$EXEC_POMDP_SOL $(pomdp_file_name) --output $(policy.filename) $options_list`)
+        end
+    end
+    policy.alphas = MOMDPAlphas(policy.filename)
+    return policy
+end
 
 solve(solver::SARSOPSolver, mdp::MDP, policy::POMDPPolicy) = mdp_error()
+solve(solver::SARSOPSolver, mdp::MDP, policy::MOMDPPolicy) = mdp_error()
 solve(solver::SARSOPSolver, mdp::MDP) = mdp_error()
 
 # solve(solver::SARSOPSolver
@@ -139,6 +174,17 @@ function load_policy(pomdp::POMDP, file_name::AbstractString)
     policy.alphas = alphas
     return policy
 end
+function load_policy(pomdp::MOMDP, file_name::AbstractString)
+    alphas = nothing
+    if isfile(file_name)
+        alphas = MOMDPAlphas(file_name)
+    else
+        error("Policy file ", file_name, " does not exist")
+    end
+    policy = MOMDPPolicy(pomdp, file_name)
+    policy.alphas = alphas
+    return policy
+end
 
 
 """
@@ -146,9 +192,12 @@ end
 Returns the belief updater (DiscreteUpdater) for SARSOP policies.
 """
 updater(p::POMDPPolicy) = DiscreteUpdater(p.pomdp)
+updater(p::MOMDPPolicy) = DiscreteUpdater(p.pomdp)
 
 create_policy(solver::SARSOPSolver, pomdp::POMDP, filename::AbstractString="out.policy") = POMDPPolicy(pomdp, filename)
+create_policy(solver::SARSOPSolver, pomdp::MOMDP, filename::AbstractString="out.policy") = MOMDPPolicy(pomdp, filename)
 create_policy(solver::SARSOPSolver, pomdp::POMDPFile, filename::AbstractString="out.policy") = POMDPPolicy(pomdp, filename)
+create_policy(solver::SARSOPSolver, pomdp::MOMDPFile, filename::AbstractString="out.policy") = MOMDPPolicy(pomdp, filename)
 create_policy(solver::SARSOPSolver, mdp::MDP, filename::AbstractString="out.policy") = mdp_error()
 
 
@@ -185,12 +234,26 @@ function action(policy::POMDPPolicy, b::DiscreteBelief)
     a = actions[indmax(utilities)] + 1
     return policy.action_map[a]
 end
+function action(policy::MOMDPPolicy, b::DiscreteBelief)
+    vectors = alphas(policy)
+    actions = action_idxs(policy)
+    utilities = product(vectors, b)
+    a = actions[indmax(utilities)] + 1
+    return policy.action_map[a]
+end
 
 # function action(policy::POMDPPolicy, b)
 #     action(policy, convert(DiscreteBelief, b))
 # end
 
 function value(policy::POMDPAlphas, b::DiscreteBelief)
+    vectors = alphas(policy)
+    actions = action_idxs(policy)
+    utilities = product(vectors, b)
+    v =  maximum(utilities)
+    return v
+end
+function value(policy::MOMDPAlphas, b::DiscreteBelief)
     vectors = alphas(policy)
     actions = action_idxs(policy)
     utilities = product(vectors, b)
